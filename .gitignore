@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VSCode or IDE
+.vscode/
+.idea/
+
+# Logs or temp files
+*.log
+
+# Data/model artifacts
+*.csv
+*.tar.gz
+*.zip
+*.bst
+
+# Docker build
+*.tar
+*.img
+*.gz
+
+# FastAPI compiled stuff
+*.db
+
+# Terraform
+*.tfstate*
+.terraform/
+
+# OS
+.DS_Store
+
