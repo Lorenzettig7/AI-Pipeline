@@ -50,6 +50,6 @@ train_input = TrainingInput(
 
 # ---- TRAIN ---- #
 xgb.fit({"train": train_input})
-
+xgb.model.save_model("model.json")
 print("Training complete. Model saved to:", s3_uri)
 

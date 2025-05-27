@@ -1,0 +1,94 @@
+# .gitlab-ci.yml
+# GitLab CI pipeline to build, test, and prepare the FastAPI inference service
+
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  IMAGE_NAME: cicids-inference
+  TAG: latest
+
+build:
+  stage: build
+  script:
+    - echo "Building Docker image"
+    - docker build -t $IMAGE_NAME:$TAG inference_service/
+  tags:
+    - docker
+
+unit_test:
+  stage: test
+  script:
+    - echo "Running test client against local API"
+    - docker run -d --rm -p 8000:8000 --name test_app -v $CI_PROJECT_DIR/inference_service/model.joblib:/app/model.joblib $IMAGE_NAME:$TAG
+    - sleep 5  # allow the container to boot
+    - python3 inference_service/test_client.py
+    - docker stop test_app
+  tags:
+    - docker
+
+save_image:
+  stage: package
+  script:
+    - echo "Saving Docker image as artifact"
+    - docker save -o cicids-inference.tar $IMAGE_NAME:$TAG
+  artifacts:
+    paths:
+      - cicids-inference.tar
+  tags:
+    - docker
+
+---
+
+# k8s/fastapi-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicids-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cicids-inference
+  template:
+    metadata:
+      labels:
+        app: cicids-inference
+    spec:
+      containers:
+        - name: inference-service
+          image: cicids-inference:latest
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: model-volume
+              mountPath: /app/model.joblib
+              subPath: model.joblib
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: model-volume
+          configMap:
+            name: model-config
+---
+
+# k8s/fastapi-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cicids-inference-service
+spec:
+  selector:
+    app: cicids-inference
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+

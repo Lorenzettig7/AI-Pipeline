@@ -1,0 +1,11 @@
+# Ignore unnecessary or large files during build
+*.csv
+*.zip
+*.tar.gz
+*.tfstate*
+__pycache__/
+*.log
+*.bst
+terraform/
+.DS_Store
+

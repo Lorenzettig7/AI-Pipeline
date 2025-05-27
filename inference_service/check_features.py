@@ -1,16 +1,17 @@
-import xgboost as xgb
+import joblib
 import numpy as np
 
-# Load your trained model
-booster = xgb.Booster()
-booster.load_model("model.bst")
+# Load the locally trained model
+model = joblib.load("model.joblib")
 
-# Try various feature counts to determine compatibility
-for i in range(60, 100):
-    try:
-        dmatrix = xgb.DMatrix(np.random.rand(1, i))
-        booster.predict(dmatrix)
-        print(f"✅ Model accepts {i} features")
-    except:
-        print(f"❌ Model rejects {i} features")
+# Check how many input features the model expects
+print(f"✅ Model expects {model.n_features_in_} features")
+
+# Optionally: Try predicting with random data
+try:
+    dummy = np.random.rand(1, model.n_features_in_)
+    pred = model.predict(dummy)
+    print(f"✅ Prediction succeeded with {model.n_features_in_} features: {pred}")
+except Exception as e:
+    print(f"❌ Prediction failed: {e}")
 

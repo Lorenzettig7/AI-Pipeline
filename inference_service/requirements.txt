@@ -3,4 +3,5 @@ uvicorn
 xgboost
 pandas
 joblib
+prometheus_client
 
