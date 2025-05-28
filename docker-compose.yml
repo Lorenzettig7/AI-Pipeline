@@ -8,6 +8,8 @@ services:
       - "8000:8000"
     volumes:
       - ./inference_service/model.joblib:/app/model.joblib
+    environment:
+      - MODEL_FILE_PATH=/app/model.joblib
 
   prometheus:
     image: prom/prometheus:latest
