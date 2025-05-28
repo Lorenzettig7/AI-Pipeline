@@ -15,8 +15,6 @@ build:
   script:
     - echo "Building Docker image"
     - docker build -t $IMAGE_NAME:$TAG inference_service/
-  tags:
-    - docker
 
 unit_test:
   stage: test
@@ -26,8 +24,6 @@ unit_test:
     - sleep 5  # allow the container to boot
     - python3 inference_service/test_client.py
     - docker stop test_app
-  tags:
-    - docker
 
 save_image:
   stage: package
@@ -37,58 +33,4 @@ save_image:
   artifacts:
     paths:
       - cicids-inference.tar
-  tags:
-    - docker
-
----
-
-# k8s/fastapi-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cicids-inference
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: cicids-inference
-  template:
-    metadata:
-      labels:
-        app: cicids-inference
-    spec:
-      containers:
-        - name: inference-service
-          image: cicids-inference:latest
-          ports:
-            - containerPort: 8000
-          volumeMounts:
-            - name: model-volume
-              mountPath: /app/model.joblib
-              subPath: model.joblib
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 10
-      volumes:
-        - name: model-volume
-          configMap:
-            name: model-config
----
-
-# k8s/fastapi-service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: cicids-inference-service
-spec:
-  selector:
-    app: cicids-inference
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8000
-  type: ClusterIP
 
