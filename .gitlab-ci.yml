@@ -5,32 +5,110 @@ stages:
   - build
   - test
   - package
+  - push_to_registry
+  - deploy_to_k8s
 
 variables:
   IMAGE_NAME: cicids-inference
-  TAG: latest
+  TAG: $CI_COMMIT_SHORT_SHA # Use commit SHA for unique tagging
+  # CI_REGISTRY_IMAGE is a predefined variable in GitLab CI/CD that defaults to
+  # $CI_REGISTRY/$CI_PROJECT_NAMESPACE/$CI_PROJECT_NAME.
+  # It's used here as the target image name in the GitLab container registry.
+  # For other registries, you might need to define this variable explicitly in GitLab CI/CD settings.
+  # e.g. DOCKER_HUB_IMAGE: yourdockerhubusername/yourimagename
+  # Ensure CI_REGISTRY, CI_REGISTRY_USER, CI_REGISTRY_PASSWORD are configured for pushing to the registry.
+  # These are typically pre-configured if using GitLab's integrated container registry.
+  # KUBE_CONFIG_DATA: Needs to be set as a CI/CD variable in GitLab project settings.
+  # This variable should contain the base64 encoded content of your kubeconfig file.
 
 build:
   stage: build
   script:
-    - echo "Building Docker image"
+    - echo "Building Docker image $IMAGE_NAME:$TAG"
     - docker build -t $IMAGE_NAME:$TAG inference_service/
 
 unit_test:
   stage: test
   script:
-    - echo "Running test client against local API"
+    - echo "Starting Docker container for testing: $IMAGE_NAME:$TAG"
     - docker run -d --rm -p 8000:8000 --name test_app -v $CI_PROJECT_DIR/inference_service/model.joblib:/app/model.joblib $IMAGE_NAME:$TAG
-    - sleep 5  # allow the container to boot
+    - echo "Waiting for service to become healthy..."
+    - |
+      timeout=30
+      interval=2
+      elapsed=0
+      until $(curl -s -f http://localhost:8000/health > /dev/null); do
+        if [ $elapsed -ge $timeout ]; then
+          echo "Service did not become healthy within $timeout seconds."
+          docker logs test_app
+          docker stop test_app
+          exit 1
+        fi
+        sleep $interval
+        elapsed=$(($elapsed + $interval))
+        echo "Retrying health check... ($elapsed/$timeout s)"
+      done
+    - echo "Service is healthy. Running test client."
     - python3 inference_service/test_client.py
+    - echo "Stopping test container."
     - docker stop test_app
 
 save_image:
   stage: package
   script:
-    - echo "Saving Docker image as artifact"
-    - docker save -o cicids-inference.tar $IMAGE_NAME:$TAG
+    - echo "Saving Docker image $IMAGE_NAME:$TAG as artifact"
+    - docker save -o cicids-inference-$CI_COMMIT_SHORT_SHA.tar $IMAGE_NAME:$TAG
   artifacts:
     paths:
-      - cicids-inference.tar
+      - cicids-inference-$CI_COMMIT_SHORT_SHA.tar
 
+push_to_registry:
+  stage: push_to_registry
+  needs:
+    - job: save_image # Depends on the save_image job to provide the image artifact
+      artifacts: true
+  script:
+    - echo "Loading Docker image artifact cicids-inference-$CI_COMMIT_SHORT_SHA.tar"
+    - docker load -i cicids-inference-$CI_COMMIT_SHORT_SHA.tar
+    # The image was originally tagged as $IMAGE_NAME:$TAG (e.g., cicids-inference:commitsha)
+    # We need to re-tag it for the GitLab container registry or any other target registry.
+    # CI_REGISTRY_IMAGE is typically $CI_REGISTRY/$CI_PROJECT_PATH (e.g. registry.gitlab.com/yourgroup/yourproject)
+    # TAG is $CI_COMMIT_SHORT_SHA
+    - echo "Tagging image $IMAGE_NAME:$TAG as $CI_REGISTRY_IMAGE:$TAG"
+    - docker tag $IMAGE_NAME:$TAG $CI_REGISTRY_IMAGE:$TAG
+    # Log in to the container registry.
+    # CI_REGISTRY, CI_REGISTRY_USER, CI_REGISTRY_PASSWORD are predefined GitLab CI variables
+    # for the integrated registry. For external registries, these might need to be set manually
+    # in GitLab CI/CD variables and potentially use different variable names.
+    - echo "Logging in to registry $CI_REGISTRY"
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - echo "Pushing image $CI_REGISTRY_IMAGE:$TAG to the registry"
+    - docker push $CI_REGISTRY_IMAGE:$TAG
+  # This job will run for all commits by default.
+  # To restrict it, e.g., to the main branch, add:
+  # rules:
+  #   - if: '$CI_COMMIT_BRANCH == "main"'
+
+deploy_to_k8s:
+  stage: deploy_to_k8s
+  needs:
+    - job: push_to_registry # Ensure image is pushed before deploying
+  # Assumes kubectl is available in the runner environment.
+  # If not, you might need to specify an image with kubectl or install it in a before_script.
+  # e.g., image: google/cloud-sdk:latest # Example: image with gcloud and kubectl
+  script:
+    - echo "Preparing Kubernetes deployment..."
+    # KUBE_CONFIG_DATA must be a base64 encoded kubeconfig file content, set as a CI/CD variable.
+    - echo "$KUBE_CONFIG_DATA" | base64 -d > kubeconfig.yaml
+    - export KUBECONFIG=$(pwd)/kubeconfig.yaml
+    # Update the image tag in the Kubernetes deployment YAML.
+    # This command replaces the entire 'image:' line with the new image and tag.
+    - echo "Updating image in k8s/fastapi-deployment.yaml to $CI_REGISTRY_IMAGE:$TAG"
+    - sed -i "s|image: .*|image: $CI_REGISTRY_IMAGE:$TAG|g" k8s/fastapi-deployment.yaml
+    - echo "Applying Kubernetes manifests from k8s/ directory..."
+    - kubectl apply -f k8s/
+    - echo "Deployment complete."
+  # This job will run for all commits by default.
+  # To restrict it, e.g., to the main branch, add:
+  # rules:
+  #   - if: '$CI_COMMIT_BRANCH == "main"'
